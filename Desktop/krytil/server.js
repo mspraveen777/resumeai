@@ -87,25 +87,18 @@ function callGemini(payload) {
 
 // Ask Gemini ONLY for keyword replacements as JSON
 async function getKeywordReplacements(pdfBase64, jobDescription, mode) {
-  const prompt = `You are a resume keyword optimizer.
+  const prompt = `Return ONLY a valid JSON array. No thinking, no explanation, no markdown, no code blocks.
 
-Analyze this resume PDF and the job description below.
-Return ONLY a JSON array of keyword replacements — nothing else.
-No explanation, no markdown, no code blocks — just raw JSON.
+Analyze this resume and job description. Return keyword replacements as raw JSON only.
 
-Format:
-[
-  {"original": "exact text from resume", "replacement": "optimized text for job"},
-  ...
-]
+Example output:
+[{"original": "debugging", "replacement": "test automation"}, {"original": "Agile", "replacement": "Scrum"}]
 
 Rules:
-- Only change keywords and phrases that are weak or missing from the job description
-- Keep replacements the SAME LENGTH as originals (very important for PDF layout)
-- Maximum 15 replacements
-- Only replace single words or short phrases (max 6 words)
-- Do NOT change: name, email, phone, LinkedIn, GitHub, dates, company names, college names, GPA
-- Focus on: skills, action verbs, technology names, methodology keywords
+- Maximum 10 replacements
+- Keep replacement same length as original
+- Do NOT change: name, email, phone, dates, company names, college names
+- Only change: skills, action verbs, technology keywords
 
 JOB DESCRIPTION:
 ${jobDescription}`;
@@ -130,14 +123,25 @@ ${jobDescription}`;
 
   const raw = await callGemini(geminiPayload);
 
-  // Parse JSON from response
-  const cleaned = raw.replace(/```json|```/g, '').trim();
+  // Better JSON extraction - handles thinking models
+  let cleaned = raw;
+  cleaned = cleaned.replace(/```json/gi, '').replace(/```/g, '');
+
   const start = cleaned.indexOf('[');
   const end = cleaned.lastIndexOf(']');
-  if (start === -1 || end === -1) throw new Error('No JSON array in Gemini response');
-  return JSON.parse(cleaned.slice(start, end + 1));
-}
 
+  if (start === -1 || end === -1) {
+    console.error('Gemini raw response:', raw.slice(0, 500));
+    return [];
+  }
+
+  try {
+    return JSON.parse(cleaned.slice(start, end + 1));
+  } catch(e) {
+    console.error('JSON parse failed:', e.message);
+    return [];
+  }
+}
 async function handleRewrite(req, res) {
   try {
     const bodyStr = await collectBody(req);
