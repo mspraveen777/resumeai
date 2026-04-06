@@ -66,12 +66,34 @@ function callGemini(payload) {
             reject(new Error(json.error.message || JSON.stringify(json.error)));
             return;
           }
-          const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (!text) {
+
+          // Gemini 2.5 thinking model — collect ALL parts text
+          const parts = json?.candidates?.[0]?.content?.parts || [];
+          console.log('Total parts in response:', parts.length);
+          
+          // Get all text parts and join them
+          let fullText = '';
+          for (const part of parts) {
+            if (part.text) {
+              fullText += part.text;
+              console.log('Part type:', part.thought ? 'THOUGHT' : 'TEXT', '| preview:', part.text.slice(0, 100));
+            }
+          }
+
+          // Only use non-thought parts if available
+          const textOnlyParts = parts.filter(p => p.text && !p.thought);
+          if (textOnlyParts.length > 0) {
+            fullText = textOnlyParts.map(p => p.text).join('');
+          }
+
+          if (!fullText) {
+            console.error('Gemini full response:', raw.slice(0, 1000));
             reject(new Error('No text in Gemini response.'));
             return;
           }
-          resolve(text);
+
+          console.log('Final text to parse:', fullText.slice(0, 300));
+          resolve(fullText);
         } catch (e) {
           reject(new Error('Failed to parse Gemini response: ' + raw.slice(0, 200)));
         }
