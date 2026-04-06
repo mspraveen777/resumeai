@@ -87,21 +87,24 @@ function callGemini(payload) {
 
 // Ask Gemini ONLY for keyword replacements as JSON
 async function getKeywordReplacements(pdfBase64, jobDescription, mode) {
-  const prompt = `Return ONLY a valid JSON array. No thinking, no explanation, no markdown, no code blocks.
+  const prompt = `You are a resume ATS optimizer. Analyze the resume PDF and job description.
 
-Analyze this resume and job description. Return keyword replacements as raw JSON only.
+IMPORTANT: You MUST return a JSON array with AT LEAST 8-10 keyword replacements.
 
-Example output:
-[{"original": "debugging", "replacement": "test automation"}, {"original": "Agile", "replacement": "Scrum"}]
+Output ONLY this exact format - nothing before or after:
+[{"original":"word from resume","replacement":"better word for job"},{"original":"another word","replacement":"optimized word"}]
 
-Rules:
-- Maximum 10 replacements
-- Keep replacement same length as original
-- Do NOT change: name, email, phone, dates, company names, college names
-- Only change: skills, action verbs, technology keywords
+STRICT RULES:
+- Find weak keywords in resume and replace with stronger ones from job description
+- Replacement must be similar character length to original
+- Do NOT change: name, email, phone, dates, company names, college names, GPA numbers
+- DO change: action verbs, skill names, methodology names, technology descriptions
+- Return minimum 8 replacements, maximum 12
 
-JOB DESCRIPTION:
-${jobDescription}`;
+JOB DESCRIPTION TO MATCH:
+${jobDescription}
+
+Return the JSON array now:`;
 
   const parts = [
     {
@@ -117,26 +120,33 @@ ${jobDescription}`;
     contents: [{ parts }],
     generationConfig: {
       maxOutputTokens: 2048,
-      temperature: 0.3,
+      temperature: 0.1,
     }
   };
 
   const raw = await callGemini(geminiPayload);
+  console.log('Gemini raw response:', raw.slice(0, 800));
 
-  // Better JSON extraction - handles thinking models
   let cleaned = raw;
-  cleaned = cleaned.replace(/```json/gi, '').replace(/```/g, '');
+  cleaned = cleaned.replace(/```json/gi, '').replace(/```/g, '').trim();
+
+  // Handle thinking model output - skip thought process
+  if (cleaned.includes('</think>')) {
+    cleaned = cleaned.split('</think>').pop().trim();
+  }
 
   const start = cleaned.indexOf('[');
   const end = cleaned.lastIndexOf(']');
 
   if (start === -1 || end === -1) {
-    console.error('Gemini raw response:', raw.slice(0, 500));
+    console.error('No JSON array found in:', cleaned.slice(0, 300));
     return [];
   }
 
   try {
-    return JSON.parse(cleaned.slice(start, end + 1));
+    const parsed = JSON.parse(cleaned.slice(start, end + 1));
+    console.log('Parsed replacements:', parsed.length);
+    return parsed;
   } catch(e) {
     console.error('JSON parse failed:', e.message);
     return [];
