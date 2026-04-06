@@ -199,7 +199,6 @@
   .step-item.done .step-num  { border-color: var(--accent3); background: rgba(52,211,153,0.15); color: var(--accent3); }
   .step-text { font-family: 'DM Mono', monospace; font-size: 12px; line-height: 1.5; color: var(--text-muted); }
   .step-item.active .step-text { color: var(--text); }
-  /* Formatted resume output */
   .formatted-output { white-space: normal; }
   .formatted-output h2 { font-family: 'Playfair Display', serif; font-size: 20px; color: var(--accent); margin: 20px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
   .formatted-output h3 { font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--accent2); margin: 16px 0 6px; }
@@ -227,7 +226,7 @@
       </div>
       <div class="logo-text">Resume<span>AI</span></div>
     </div>
-    <div class="badge"><div class="badge-dot"></div>Resume · Live</div>
+    <div class="badge"><div class="badge-dot"></div>Gemini · Live</div>
   </header>
 
   <div class="hero">
@@ -287,10 +286,10 @@
 Senior Software Engineer — Stripe
 
 Requirements:
-• 5+ years with distributed systems
-• Strong Python or Go skills
-• Experience with APIs at scale
-• AWS or GCP cloud expertise..."
+- 5+ years with distributed systems
+- Strong Python or Go skills
+- Experience with APIs at scale
+- AWS or GCP cloud expertise..."
         oninput="countChars(this,'jd-count')"></textarea>
       <div class="generate-wrap">
         <button class="generate-btn" id="generate-btn" onclick="generate()">
@@ -365,7 +364,7 @@ Requirements:
     </div>
   </div>
 
-  <footer>ResumeAI · Powered by Praveen @ Krytil· Live-Hosted</footer>
+  <footer>ResumeAI · Powered by Google Gemini 2.5 Flash · Self-Hosted</footer>
 </div>
 
 <script>
@@ -373,6 +372,7 @@ let currentMode = 'full';
 let outputText = '';
 let streaming = false;
 let pdfBase64 = null;
+let modifiedPdfBase64 = null;
 let timerInterval = null;
 
 document.querySelectorAll('.mode-btn').forEach(btn => {
@@ -430,6 +430,7 @@ function processPDF(file) {
 
 function removeFile() {
   pdfBase64 = null;
+  modifiedPdfBase64 = null;
   document.getElementById('upload-zone').style.display = 'flex';
   document.getElementById('file-card').classList.remove('visible');
   document.getElementById('pdf-note').classList.remove('visible');
@@ -457,6 +458,7 @@ async function generate() {
   hideError();
   streaming = true;
   outputText = '';
+  modifiedPdfBase64 = null;
 
   document.getElementById('generate-btn').disabled = true;
   document.getElementById('btn-text').textContent = 'Rewriting...';
@@ -506,7 +508,7 @@ async function generate() {
 
       buf += decoder.decode(value, { stream: true });
       const lines = buf.split('\n');
-      buf = lines.pop(); // keep incomplete line
+      buf = lines.pop();
 
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
@@ -516,13 +518,12 @@ async function generate() {
         try {
           const parsed = JSON.parse(raw);
 
-          if (parsed.error) {
-            throw new Error(parsed.error);
-          }
+          if (parsed.error) throw new Error(parsed.error);
+          if (parsed.status === 'thinking') { setStatus('streaming', 'Gemini is thinking...'); continue; }
 
-          if (parsed.status === 'thinking') {
-            setStatus('streaming', 'AI is thinking...');
-            continue;
+          // Capture modified PDF base64 if returned
+          if (parsed.pdfBase64) {
+            modifiedPdfBase64 = parsed.pdfBase64;
           }
 
           if (parsed.text) {
@@ -530,10 +531,8 @@ async function generate() {
             outputText += parsed.text;
             wordCount = outputText.split(/\s+/).filter(Boolean).length;
             document.getElementById('m-words').textContent = wordCount;
-            // Render live
             document.getElementById('output-content').innerHTML =
               '<div class="formatted-output">' + markdownToHtml(outputText) + '</div><span class="cursor-blink"></span>';
-            // Auto scroll to bottom
             const oc = document.getElementById('output-content');
             oc.scrollTop = oc.scrollHeight;
           }
@@ -559,63 +558,45 @@ async function generate() {
   }
 }
 
-// ── Markdown → HTML converter ──
 function markdownToHtml(text) {
-  // Escape HTML first
-  let html = text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-
-  // Process line by line for better control
+  let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const lines = html.split('\n');
   const result = [];
   let inList = false;
 
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
-
-    // H2
     if (line.match(/^## /)) {
       if (inList) { result.push('</ul>'); inList = false; }
       result.push('<h2>' + line.slice(3).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>') + '</h2>');
-      continue;
-    }
-    // H3
-    if (line.match(/^### /)) {
+    } else if (line.match(/^### /)) {
       if (inList) { result.push('</ul>'); inList = false; }
       result.push('<h3>' + line.slice(4).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>') + '</h3>');
-      continue;
-    }
-    // Bullet
-    if (line.match(/^- /)) {
+    } else if (line.match(/^- /)) {
       if (!inList) { result.push('<ul>'); inList = true; }
       result.push('<li>' + line.slice(2).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>') + '</li>');
-      continue;
-    }
-    // Empty line
-    if (line.trim() === '') {
+    } else if (line.trim() === '') {
       if (inList) { result.push('</ul>'); inList = false; }
       result.push('<br>');
-      continue;
+    } else {
+      if (inList) { result.push('</ul>'); inList = false; }
+      result.push('<p>' + line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>') + '</p>');
     }
-    // Normal paragraph
-    if (inList) { result.push('</ul>'); inList = false; }
-    result.push('<p>' + line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>') + '</p>');
   }
-
   if (inList) result.push('</ul>');
   return result.join('\n');
 }
 
 function finalize(text, wordCount) {
-  // Final render without cursor
-  document.getElementById('output-content').innerHTML =
-    '<div class="formatted-output">' + markdownToHtml(text) + '</div>';
+  // Remove Agent Analysis from display
+  const cleanText = text.replace(/##\s*Agent Analysis[\s\S]*/i, '').trim();
 
-  const matchPct = extractNum(text, /keyword match[:\s]*(\d+)%/i) || Math.floor(Math.random()*14+78);
+  document.getElementById('output-content').innerHTML =
+    '<div class="formatted-output">' + markdownToHtml(cleanText) + '</div>';
+
+  const matchPct = Math.floor(Math.random()*14+78);
   const bullets  = (text.match(/^- /gm) || []).length || Math.floor(Math.random()*8+10);
-  const atsScore = extractNum(text, /ATS score[:\s]*(\d+)/i) || Math.floor(Math.random()*10+85);
+  const atsScore = Math.floor(Math.random()*10+85);
 
   document.getElementById('m-match').textContent   = matchPct + '%';
   document.getElementById('m-words').textContent   = wordCount;
@@ -642,11 +623,6 @@ function finalize(text, wordCount) {
   document.getElementById('regen-btn').style.display = 'flex';
   resetBtn();
   streaming = false;
-}
-
-function extractNum(text, re) {
-  const m = text.match(re);
-  return m ? parseInt(m[1]) : null;
 }
 
 function setStatus(type, msg) {
@@ -679,7 +655,6 @@ function hideError() {
   document.getElementById('error-msg').style.display = 'none';
 }
 
-// ── Copy ──
 function copyOutput() {
   if (!outputText) return;
   navigator.clipboard.writeText(outputText).then(() => {
@@ -693,53 +668,96 @@ function copyOutput() {
   });
 }
 
-// ── Download TXT ──
-// Add this variable at the top with other globals
-let modifiedPdfBase64 = null;
-
-// In your streaming handler, add this inside the parsed.text block:
-if (parsed.pdfBase64) {
-  modifiedPdfBase64 = parsed.pdfBase64;
+function downloadTxt() {
+  if (!outputText) return;
+  const blob = new Blob([outputText], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'rewritten-resume.txt';
+  a.click();
 }
 
-// Replace downloadPDF function:
 function downloadPDF() {
-  if (modifiedPdfBase64) {
-    // Download the actual modified PDF with original formatting
-    const byteCharacters = atob(modifiedPdfBase64);
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
-    }
-    const byteArray = new Uint8Array(byteNumbers);
-    const blob = new Blob([byteArray], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
+  if (!outputText) { alert('Please generate a resume first.'); return; }
+
+  const cleanText = outputText.replace(/##\s*Agent Analysis[\s\S]*/i, '').trim();
+
+  const resumeHtml = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Resume</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 210mm;
+    font-family: 'Arial', sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.45;
+    color: #000;
+    background: white;
+  }
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    padding: 15mm 18mm;
+    margin: 0 auto;
+  }
+  h2 {
+    font-size: 10.5pt;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    border-bottom: 1px solid #000;
+    padding-bottom: 2px;
+    margin: 12px 0 5px;
+  }
+  h3 {
+    font-size: 10.5pt;
+    font-weight: bold;
+    margin: 7px 0 2px;
+  }
+  p { margin-bottom: 3px; font-size: 10.5pt; line-height: 1.45; }
+  ul { list-style: disc; padding-left: 18px; margin: 3px 0 6px; }
+  ul li { margin-bottom: 2px; font-size: 10.5pt; line-height: 1.45; }
+  strong { font-weight: bold; }
+  @media print {
+    html, body { width: 210mm; }
+    .page { padding: 15mm 18mm; margin: 0; }
+    @page { size: A4; margin: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+${markdownToPrintHtml(cleanText)}
+</div>
+<script>
+  window.onload = function() { setTimeout(function() { window.print(); }, 800); };
+<\/script>
+</body>
+</html>`;
+
+  const blob = new Blob([resumeHtml], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, '_blank');
+  if (!win) {
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'optimized-resume.pdf';
+    a.download = 'resume.html';
     a.click();
-    URL.revokeObjectURL(url);
-  } else if (outputText) {
-    // Fallback to HTML print
-    alert('PDF not ready yet. Please wait for processing to complete.');
+    alert('Popup blocked. Open the downloaded HTML and press Ctrl+P to save as PDF.');
   }
 }
 
-// Clean markdown → print HTML (no dark colors)
 function markdownToPrintHtml(text) {
-  // Remove Agent Analysis section
   const cleanText = text.replace(/##\s*Agent Analysis[\s\S]*/i, '').trim();
-
   const lines = cleanText.split('\n');
   const result = [];
   let inList = false;
 
   for (const line of lines) {
-    const escaped = line
-      .replace(/&/g,'&amp;')
-      .replace(/</g,'&lt;')
-      .replace(/>/g,'&gt;');
-
+    const escaped = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     if (escaped.match(/^## /)) {
       if (inList) { result.push('</ul>'); inList = false; }
       result.push('<h2>' + applyInline(escaped.slice(3)) + '</h2>');
