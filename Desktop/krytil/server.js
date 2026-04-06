@@ -1,9 +1,8 @@
-// server.js — ResumeAI with PDF keyword swap
+// server.js — ResumeAI backend with Google Gemini
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
-const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const PORT = process.env.PORT || 3000;
@@ -67,27 +66,20 @@ function callGemini(payload) {
             return;
           }
 
-          // Gemini 2.5 thinking model — collect ALL parts
+          // Handle thinking model — skip thought parts
           const parts = json?.candidates?.[0]?.content?.parts || [];
-          console.log('Total parts in response:', parts.length);
-
-          // Only use non-thought parts
-          const textOnlyParts = parts.filter(p => p.text && !p.thought);
-          let fullText = textOnlyParts.map(p => p.text).join('');
-
-          // Fallback to all parts if no non-thought parts
-          if (!fullText) {
-            fullText = parts.filter(p => p.text).map(p => p.text).join('');
+          const textParts = parts.filter(p => p.text && !p.thought);
+          let text = textParts.map(p => p.text).join('');
+          if (!text) {
+            text = parts.filter(p => p.text).map(p => p.text).join('');
           }
 
-          if (!fullText) {
-            console.error('Gemini full response:', raw.slice(0, 1000));
-            reject(new Error('No text in Gemini response.'));
+          if (!text) {
+            console.error('Gemini raw response:', raw.slice(0, 500));
+            reject(new Error('No text in Gemini response. Check API key and quota.'));
             return;
           }
-
-          console.log('Final text preview:', fullText.slice(0, 300));
-          resolve(fullText);
+          resolve(text);
         } catch (e) {
           reject(new Error('Failed to parse Gemini response: ' + raw.slice(0, 200)));
         }
@@ -101,84 +93,46 @@ function callGemini(payload) {
   });
 }
 
-async function getKeywordReplacements(pdfBase64, jobDescription, mode) {
-  const prompt = `You are a resume ATS optimizer. Analyze the resume PDF and job description.
-
-IMPORTANT: You MUST return a JSON array with AT LEAST 8-10 keyword replacements.
-
-Output ONLY this exact format - nothing before or after:
-[{"original":"word from resume","replacement":"better word for job"},{"original":"another word","replacement":"optimized word"}]
-
-STRICT RULES:
-- Find weak keywords in resume and replace with stronger ones from job description
-- Replacement must be similar character length to original
-- Do NOT change: name, email, phone, dates, company names, college names, GPA numbers
-- DO change: action verbs, skill names, methodology names, technology descriptions
-- Return minimum 8 replacements, maximum 12
-- No markdown, no code blocks, no backticks, no explanation — ONLY the JSON array
-
-JOB DESCRIPTION TO MATCH:
-${jobDescription}
-
-Return the JSON array now:`;
-
-  const parts = [
-    {
-      inline_data: {
-        mime_type: 'application/pdf',
-        data: pdfBase64
-      }
-    },
-    { text: prompt }
-  ];
-
-  const geminiPayload = {
-    contents: [{ parts }],
-    generationConfig: {
-      maxOutputTokens: 2048,
-      temperature: 0.1,
-    }
-  };
-
-  const raw = await callGemini(geminiPayload);
-  console.log('Raw response:', raw.slice(0, 500));
-
-  // Remove ALL markdown formatting
-  let cleaned = raw
-    .replace(/```json\n?/gi, '')
-    .replace(/```\n?/gi, '')
-    .replace(/`/g, '')
-    .trim();
-
-  console.log('Cleaned response:', cleaned.slice(0, 500));
-
-  const start = cleaned.indexOf('[');
-  const end = cleaned.lastIndexOf(']');
-
-  if (start === -1 || end === -1) {
-    console.error('No JSON array found, cleaned text:', cleaned.slice(0, 300));
-    return [];
-  }
-
-  try {
-    const jsonStr = cleaned.slice(start, end + 1);
-    console.log('JSON string:', jsonStr.slice(0, 300));
-    const parsed = JSON.parse(jsonStr);
-    console.log('Successfully parsed:', parsed.length, 'replacements');
-    return parsed;
-  } catch(e) {
-    console.error('JSON parse error:', e.message);
-    return [];
-  }
-}
-
-async function handleRewrite(req, res) {
+async function handleGemini(req, res) {
   try {
     const bodyStr = await collectBody(req);
     const { prompt, pdfBase64, mode } = JSON.parse(bodyStr);
 
     if (!prompt) throw new Error('Missing job description');
     if (!pdfBase64) throw new Error('Missing PDF');
+
+    const systemPrompt = `You are an expert resume writer and career coach specializing in ATS optimization.
+Rewrite mode: ${modeInstructions[mode] || modeInstructions.full}
+
+CRITICAL RULES:
+- Keep the EXACT same resume structure, sections, and order as the original
+- Keep the EXACT same bullet point count — do not add or remove bullets
+- Keep the EXACT same candidate name, contact info, company names, dates, job titles
+- ONLY swap weak keywords/phrases with job-description-matching ones
+- Do NOT add new sections or remove existing ones
+- Do NOT add metrics that weren't in the original
+- Output ONLY the resume — NO analysis, NO commentary, NO "Agent Analysis" section
+- Format: ## for section headers, ### for job titles, - for bullets, **bold** for company/dates`;
+
+    const parts = [
+      {
+        inline_data: {
+          mime_type: 'application/pdf',
+          data: pdfBase64
+        }
+      },
+      {
+        text: `${systemPrompt}\n\nJOB DESCRIPTION:\n\n${prompt}\n\nRewrite my resume now. Output ONLY the resume content, nothing else.`
+      }
+    ];
+
+    const geminiPayload = {
+      contents: [{ parts }],
+      generationConfig: {
+        maxOutputTokens: 8192,
+        temperature: 0.4,
+      }
+    };
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -188,64 +142,23 @@ async function handleRewrite(req, res) {
     });
 
     res.write(`data: ${JSON.stringify({ status: 'thinking' })}\n\n`);
-    res.write(`data: ${JSON.stringify({ text: 'Analyzing resume and job description...\n' })}\n\n`);
 
-    // Step 1: Get keyword replacements from Gemini
-    const replacements = await getKeywordReplacements(pdfBase64, prompt, mode);
+    const fullText = await callGemini(geminiPayload);
 
-    res.write(`data: ${JSON.stringify({ text: `Found ${replacements.length} keyword optimizations.\n\nApplying changes to your PDF...\n\n` })}\n\n`);
-
-    // Step 2: Show what's being changed
-    let changeLog = '**Keyword Changes Applied:**\n\n';
-    if (replacements.length > 0) {
-      replacements.forEach((r) => {
-        changeLog += `- "${r.original}" → "${r.replacement}"\n`;
-      });
-    } else {
-      changeLog += '- No changes needed — resume already well optimized!\n';
-    }
-    changeLog += '\n---\n\n✅ **Your PDF has been optimized!** Click "Download PDF" to get your resume with the exact same formatting.\n\n';
-    changeLog += `**Keywords injected:** ${replacements.map(r => r.replacement).join(', ')}\n`;
-    changeLog += `\nKeyword match: ${Math.floor(Math.random()*14+78)}%\n`;
-    changeLog += `ATS score: ${Math.floor(Math.random()*10+85)}/100\n`;
-
-    // Stream the changelog
-    const words = changeLog.split(/(\s+)/);
-    for (let i = 0; i < words.length; i += 4) {
-      const chunk = words.slice(i, i + 4).join('');
+    // Stream word by word
+    const words = fullText.split(/(\s+)/);
+    const BATCH = 6;
+    for (let i = 0; i < words.length; i += BATCH) {
+      const chunk = words.slice(i, i + BATCH).join('');
       res.write(`data: ${JSON.stringify({ text: chunk })}\n\n`);
-      await new Promise(r => setTimeout(r, 15));
+      await new Promise(r => setTimeout(r, 18));
     }
 
-    // Step 3: Apply replacements to PDF binary
-    const pdfBuffer = Buffer.from(pdfBase64, 'base64');
-    let pdfStr = pdfBuffer.toString('latin1');
-
-    let appliedCount = 0;
-    for (const { original, replacement } of replacements) {
-      if (!original || !replacement) continue;
-      const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(escaped, 'g');
-      if (pdfStr.includes(original)) {
-        pdfStr = pdfStr.replace(regex, replacement);
-        appliedCount++;
-        console.log(`Applied: "${original}" → "${replacement}"`);
-      } else {
-        console.log(`Not found in PDF: "${original}"`);
-      }
-    }
-
-    console.log(`Total applied: ${appliedCount}/${replacements.length}`);
-
-    const modifiedPdfBuffer = Buffer.from(pdfStr, 'latin1');
-    const modifiedBase64 = modifiedPdfBuffer.toString('base64');
-
-    res.write(`data: ${JSON.stringify({ pdfBase64: modifiedBase64, appliedCount })}\n\n`);
     res.write('data: [DONE]\n\n');
     res.end();
 
   } catch (err) {
-    console.error('Error:', err.message);
+    console.error('Gemini error:', err.message);
     if (!res.headersSent) {
       res.writeHead(500, {
         'Content-Type': 'text/event-stream',
@@ -263,7 +176,7 @@ const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
-  if (req.method === 'POST' && req.url === '/api/rewrite') { handleRewrite(req, res); return; }
+  if (req.method === 'POST' && req.url === '/api/rewrite') { handleGemini(req, res); return; }
 
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -283,6 +196,9 @@ const server = http.createServer((req, res) => {
 
 server.timeout = 120000;
 server.listen(PORT, () => {
-  console.log(`\n  ✅ ResumeAI running on http://localhost:${PORT}`);
-  console.log(`  🤖 Model: gemini-2.5-flash\n`);
+  console.log('');
+  console.log('  ✅ ResumeAI server running!');
+  console.log(`  🌐 Open: http://localhost:${PORT}`);
+  console.log(`  🤖 Model: gemini-2.5-flash`);
+  console.log('');
 });
