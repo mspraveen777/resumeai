@@ -1,4 +1,4 @@
-// server.js — ResumeAI with PDF keyword swap using pdf-lib
+// server.js — ResumeAI with PDF keyword swap
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
@@ -67,23 +67,17 @@ function callGemini(payload) {
             return;
           }
 
-          // Gemini 2.5 thinking model — collect ALL parts text
+          // Gemini 2.5 thinking model — collect ALL parts
           const parts = json?.candidates?.[0]?.content?.parts || [];
           console.log('Total parts in response:', parts.length);
-          
-          // Get all text parts and join them
-          let fullText = '';
-          for (const part of parts) {
-            if (part.text) {
-              fullText += part.text;
-              console.log('Part type:', part.thought ? 'THOUGHT' : 'TEXT', '| preview:', part.text.slice(0, 100));
-            }
-          }
 
-          // Only use non-thought parts if available
+          // Only use non-thought parts
           const textOnlyParts = parts.filter(p => p.text && !p.thought);
-          if (textOnlyParts.length > 0) {
-            fullText = textOnlyParts.map(p => p.text).join('');
+          let fullText = textOnlyParts.map(p => p.text).join('');
+
+          // Fallback to all parts if no non-thought parts
+          if (!fullText) {
+            fullText = parts.filter(p => p.text).map(p => p.text).join('');
           }
 
           if (!fullText) {
@@ -92,7 +86,7 @@ function callGemini(payload) {
             return;
           }
 
-          console.log('Final text to parse:', fullText.slice(0, 300));
+          console.log('Final text preview:', fullText.slice(0, 300));
           resolve(fullText);
         } catch (e) {
           reject(new Error('Failed to parse Gemini response: ' + raw.slice(0, 200)));
@@ -107,7 +101,6 @@ function callGemini(payload) {
   });
 }
 
-// Ask Gemini ONLY for keyword replacements as JSON
 async function getKeywordReplacements(pdfBase64, jobDescription, mode) {
   const prompt = `You are a resume ATS optimizer. Analyze the resume PDF and job description.
 
@@ -122,6 +115,7 @@ STRICT RULES:
 - Do NOT change: name, email, phone, dates, company names, college names, GPA numbers
 - DO change: action verbs, skill names, methodology names, technology descriptions
 - Return minimum 8 replacements, maximum 12
+- No markdown, no code blocks, no backticks, no explanation — ONLY the JSON array
 
 JOB DESCRIPTION TO MATCH:
 ${jobDescription}
@@ -147,33 +141,37 @@ Return the JSON array now:`;
   };
 
   const raw = await callGemini(geminiPayload);
-  console.log('Gemini raw response:', raw.slice(0, 800));
+  console.log('Raw response:', raw.slice(0, 500));
 
-  let cleaned = raw;
-  cleaned = cleaned.replace(/```json/gi, '').replace(/```/g, '').trim();
+  // Remove ALL markdown formatting
+  let cleaned = raw
+    .replace(/```json\n?/gi, '')
+    .replace(/```\n?/gi, '')
+    .replace(/`/g, '')
+    .trim();
 
-  // Handle thinking model output - skip thought process
-  if (cleaned.includes('</think>')) {
-    cleaned = cleaned.split('</think>').pop().trim();
-  }
+  console.log('Cleaned response:', cleaned.slice(0, 500));
 
   const start = cleaned.indexOf('[');
   const end = cleaned.lastIndexOf(']');
 
   if (start === -1 || end === -1) {
-    console.error('No JSON array found in:', cleaned.slice(0, 300));
+    console.error('No JSON array found, cleaned text:', cleaned.slice(0, 300));
     return [];
   }
 
   try {
-    const parsed = JSON.parse(cleaned.slice(start, end + 1));
-    console.log('Parsed replacements:', parsed.length);
+    const jsonStr = cleaned.slice(start, end + 1);
+    console.log('JSON string:', jsonStr.slice(0, 300));
+    const parsed = JSON.parse(jsonStr);
+    console.log('Successfully parsed:', parsed.length, 'replacements');
     return parsed;
   } catch(e) {
-    console.error('JSON parse failed:', e.message);
+    console.error('JSON parse error:', e.message);
     return [];
   }
 }
+
 async function handleRewrite(req, res) {
   try {
     const bodyStr = await collectBody(req);
@@ -199,9 +197,13 @@ async function handleRewrite(req, res) {
 
     // Step 2: Show what's being changed
     let changeLog = '**Keyword Changes Applied:**\n\n';
-    replacements.forEach((r, i) => {
-      changeLog += `- "${r.original}" → "${r.replacement}"\n`;
-    });
+    if (replacements.length > 0) {
+      replacements.forEach((r) => {
+        changeLog += `- "${r.original}" → "${r.replacement}"\n`;
+      });
+    } else {
+      changeLog += '- No changes needed — resume already well optimized!\n';
+    }
     changeLog += '\n---\n\n✅ **Your PDF has been optimized!** Click "Download PDF" to get your resume with the exact same formatting.\n\n';
     changeLog += `**Keywords injected:** ${replacements.map(r => r.replacement).join(', ')}\n`;
     changeLog += `\nKeyword match: ${Math.floor(Math.random()*14+78)}%\n`;
@@ -215,36 +217,30 @@ async function handleRewrite(req, res) {
       await new Promise(r => setTimeout(r, 15));
     }
 
-    // Step 3: Apply replacements to actual PDF using pdf-lib
+    // Step 3: Apply replacements to PDF binary
     const pdfBuffer = Buffer.from(pdfBase64, 'base64');
-    const pdfDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
-
-    // Get the raw PDF bytes and do text substitution at binary level
-    // This preserves ALL formatting, fonts, layout exactly
-    let pdfBytes = Buffer.from(pdfBuffer);
-    let pdfStr = pdfBytes.toString('latin1');
+    let pdfStr = pdfBuffer.toString('latin1');
 
     let appliedCount = 0;
     for (const { original, replacement } of replacements) {
       if (!original || !replacement) continue;
-      // Try to find and replace in PDF binary stream
       const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const regex = new RegExp(escaped, 'g');
       if (pdfStr.includes(original)) {
         pdfStr = pdfStr.replace(regex, replacement);
         appliedCount++;
+        console.log(`Applied: "${original}" → "${replacement}"`);
+      } else {
+        console.log(`Not found in PDF: "${original}"`);
       }
     }
+
+    console.log(`Total applied: ${appliedCount}/${replacements.length}`);
 
     const modifiedPdfBuffer = Buffer.from(pdfStr, 'latin1');
     const modifiedBase64 = modifiedPdfBuffer.toString('base64');
 
-    // Send the modified PDF as base64
-    res.write(`data: ${JSON.stringify({ 
-      pdfBase64: modifiedBase64,
-      appliedCount 
-    })}\n\n`);
-
+    res.write(`data: ${JSON.stringify({ pdfBase64: modifiedBase64, appliedCount })}\n\n`);
     res.write('data: [DONE]\n\n');
     res.end();
 
