@@ -245,7 +245,7 @@ http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath)] || 'text/plain' });
     res.end(data);
   });
-}).listen(PORT,'0.0.0.0', () => {
+}).listen(PORT, '0.0.0.0', () => {
   console.log('');
   console.log('  ✅ ResumeAI server running!');
   console.log(`  🌐 Open: http://localhost:${PORT}`);
