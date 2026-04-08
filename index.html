@@ -210,6 +210,26 @@
   .formatted-output br { display: block; content: ''; margin: 2px 0; }
   .error-msg { padding: 16px 20px; background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.2); border-radius: 8px; color: var(--danger); font-family: 'DM Mono', monospace; font-size: 12px; margin: 16px 20px; display: none; }
   footer { text-align: center; padding: 24px 0; border-top: 1px solid var(--border); font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text-dim); letter-spacing: 1px; }
+  .btn-back {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: 'DM Mono', monospace; font-size: 12px;
+    padding: 8px 16px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    color: var(--text-muted);
+    text-decoration: none;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s, background 0.2s;
+    letter-spacing: 0.5px;
+  }
+  .btn-back:hover {
+    border-color: rgba(79,143,255,0.5);
+    color: var(--accent);
+    background: rgba(79,143,255,0.06);
+  }
+  .btn-back svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; transition: transform 0.2s; }
+  .btn-back:hover svg { transform: translateX(-2px); }
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
@@ -226,7 +246,13 @@
       </div>
       <div class="logo-text">Resume<span>AI</span></div>
     </div>
-    <div class="badge"><div class="badge-dot"></div>Resume · Live</div>
+    <div style="display:flex;align-items:center;gap:14px;">
+      <a class="btn-back" href="/dashboard.html">
+        <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+        Dashboard
+      </a>
+      <div class="badge"><div class="badge-dot"></div>Resume · Live</div>
+    </div>
   </header>
 
   <div class="hero">
