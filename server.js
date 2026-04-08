@@ -6,7 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 if (!GEMINI_API_KEY) {
   console.error('ERROR: GEMINI_API_KEY environment variable is not set.');
