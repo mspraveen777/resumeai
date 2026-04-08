@@ -1,4 +1,4 @@
-// server.js — ResumeAI backend with Google Gemini + JSON file DB
+// server.js — ResumeAI backend with Google Gemini + JSON file DB (no native modules)
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
@@ -6,14 +6,14 @@ const path = require('path');
 const crypto = require('crypto');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 
 if (!GEMINI_API_KEY) {
   console.error('ERROR: GEMINI_API_KEY environment variable is not set.');
   process.exit(1);
 }
 
-// ─── Simple JSON File Database ────────────────────────────────
+// ─── Simple JSON File Database (zero dependencies) ────────────
 const DB_FILE = path.join(__dirname, 'resumeai-db.json');
 
 function loadDB() {
@@ -67,14 +67,9 @@ function getTokenFromRequest(req) {
 
 // ─── Utilities ────────────────────────────────────────────────
 const MIME = {
-  '.html': 'text/html',
-  '.js':   'application/javascript',
-  '.css':  'text/css',
-  '.pdf':  'application/pdf',
-  '.txt':  'text/plain',
-  '.ico':  'image/x-icon',
-  '.png':  'image/png',
-  '.jpg':  'image/jpeg',
+  '.html': 'text/html', '.js': 'application/javascript',
+  '.css': 'text/css', '.pdf': 'application/pdf',
+  '.txt': 'text/plain', '.ico': 'image/x-icon',
 };
 
 function collectBody(req) {
@@ -87,10 +82,7 @@ function collectBody(req) {
 }
 
 function sendJSON(res, status, data) {
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-  });
+  res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(data));
 }
 
@@ -99,69 +91,40 @@ async function handleRegister(req, res) {
   try {
     const body = JSON.parse(await collectBody(req));
     const { name, email, password } = body;
-    if (!name || !email || !password)
-      return sendJSON(res, 400, { error: 'All fields are required.' });
-    if (password.length < 8)
-      return sendJSON(res, 400, { error: 'Password must be at least 8 characters.' });
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
-      return sendJSON(res, 400, { error: 'Invalid email address.' });
+    if (!name || !email || !password) return sendJSON(res, 400, { error: 'All fields are required.' });
+    if (password.length < 8) return sendJSON(res, 400, { error: 'Password must be at least 8 characters.' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return sendJSON(res, 400, { error: 'Invalid email address.' });
     const db = loadDB();
     if (db.users.find(u => u.email === email.toLowerCase()))
       return sendJSON(res, 409, { error: 'An account with this email already exists.' });
     const id = Date.now();
-    db.users.push({
-      id,
-      name: name.trim(),
-      email: email.toLowerCase(),
-      password_hash: hashPassword(password),
-      created_at: new Date().toISOString()
-    });
+    db.users.push({ id, name: name.trim(), email: email.toLowerCase(), password_hash: hashPassword(password), created_at: new Date().toISOString() });
     saveDB(db);
     const token = createSession(id);
-    res.writeHead(200, {
-      'Content-Type': 'application/json',
-      'Set-Cookie': `session=${token}; HttpOnly; Path=/; Max-Age=${7 * 24 * 3600}; SameSite=Strict`
-    });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': `session=${token}; HttpOnly; Path=/; Max-Age=${7*24*3600}; SameSite=Strict` });
     res.end(JSON.stringify({ ok: true, name: name.trim() }));
-  } catch (e) {
-    console.error('Register error:', e);
-    sendJSON(res, 500, { error: 'Registration failed.' });
-  }
+  } catch (e) { console.error(e); sendJSON(res, 500, { error: 'Registration failed.' }); }
 }
 
 async function handleLogin(req, res) {
   try {
     const body = JSON.parse(await collectBody(req));
     const { email, password } = body;
-    if (!email || !password)
-      return sendJSON(res, 400, { error: 'Email and password are required.' });
+    if (!email || !password) return sendJSON(res, 400, { error: 'Email and password are required.' });
     const db = loadDB();
     const user = db.users.find(u => u.email === email.toLowerCase());
     if (!user || !verifyPassword(password, user.password_hash))
       return sendJSON(res, 401, { error: 'Invalid email or password.' });
     const token = createSession(user.id);
-    res.writeHead(200, {
-      'Content-Type': 'application/json',
-      'Set-Cookie': `session=${token}; HttpOnly; Path=/; Max-Age=${7 * 24 * 3600}; SameSite=Strict`
-    });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': `session=${token}; HttpOnly; Path=/; Max-Age=${7*24*3600}; SameSite=Strict` });
     res.end(JSON.stringify({ ok: true, name: user.name }));
-  } catch (e) {
-    console.error('Login error:', e);
-    sendJSON(res, 500, { error: 'Login failed.' });
-  }
+  } catch (e) { console.error(e); sendJSON(res, 500, { error: 'Login failed.' }); }
 }
 
 function handleLogout(req, res) {
   const token = getTokenFromRequest(req);
-  if (token) {
-    const db = loadDB();
-    db.sessions = db.sessions.filter(s => s.token !== token);
-    saveDB(db);
-  }
-  res.writeHead(302, {
-    'Set-Cookie': 'session=; HttpOnly; Path=/; Max-Age=0',
-    'Location': '/login.html'
-  });
+  if (token) { const db = loadDB(); db.sessions = db.sessions.filter(s => s.token !== token); saveDB(db); }
+  res.writeHead(302, { 'Set-Cookie': 'session=; HttpOnly; Path=/; Max-Age=0', 'Location': '/login.html' });
   res.end();
 }
 
@@ -187,13 +150,8 @@ function callGemini(payload) {
       hostname: 'generativelanguage.googleapis.com',
       path: `/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(bodyStr)
-      },
-      timeout: 120000,
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) }
     };
-
     const req = https.request(options, r => {
       const chunks = [];
       r.on('data', chunk => chunks.push(chunk));
@@ -206,18 +164,11 @@ function callGemini(payload) {
           if (!text) text = parts.filter(p => p.text).map(p => p.text).join('');
           if (!text) { reject(new Error('No text in Gemini response.')); return; }
           resolve(text);
-        } catch (e) {
-          reject(new Error('Failed to parse Gemini response'));
-        }
+        } catch (e) { reject(new Error('Failed to parse Gemini response')); }
       });
       r.on('error', reject);
     });
-
     req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Gemini request timed out. Please try again.'));
-    });
     req.write(bodyStr);
     req.end();
   });
@@ -226,10 +177,8 @@ function callGemini(payload) {
 async function handleGemini(req, res) {
   if (!getSession(getTokenFromRequest(req))) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Unauthorized' }));
-    return;
+    res.end(JSON.stringify({ error: 'Unauthorized' })); return;
   }
-
   try {
     const { prompt, pdfBase64, mode } = JSON.parse(await collectBody(req));
     if (!prompt) throw new Error('Missing job description');
@@ -241,85 +190,45 @@ RULES: Keep same structure, bullet count, name, contact info, company names, dat
 Only improve keywords/phrasing. Output ONLY the resume. No commentary.
 Format: ## headers, ### job titles, - bullets, **bold** company/dates`;
 
-    // Send headers immediately
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
-      'X-Accel-Buffering': 'no',
-    });
-
-    // Disable all timeouts on the socket
-    req.socket.setTimeout(0);
-    req.socket.setNoDelay(true);
-    req.socket.setKeepAlive(true);
-
-    // Send thinking status immediately
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'Access-Control-Allow-Origin': '*' });
     res.write(`data: ${JSON.stringify({ status: 'thinking' })}\n\n`);
 
-    // Heartbeat every 15s so connection stays alive during Gemini processing
-    const heartbeat = setInterval(() => {
-      try { res.write(`: heartbeat\n\n`); } catch (e) { clearInterval(heartbeat); }
-    }, 15000);
+    const fullText = await callGemini({
+      contents: [{ parts: [
+        { inline_data: { mime_type: 'application/pdf', data: pdfBase64 } },
+        { text: `${systemPrompt}\n\nJOB DESCRIPTION:\n\n${prompt}\n\nRewrite my resume now.` }
+      ]}],
+      generationConfig: { maxOutputTokens: 8192, temperature: 0.4 }
+    });
 
-    let fullText;
-    try {
-      fullText = await callGemini({
-        contents: [{ parts: [
-          { inline_data: { mime_type: 'application/pdf', data: pdfBase64 } },
-          { text: `${systemPrompt}\n\nJOB DESCRIPTION:\n\n${prompt}\n\nRewrite my resume now.` }
-        ]}],
-        generationConfig: { maxOutputTokens: 8192, temperature: 0.4 }
-      });
-    } finally {
-      clearInterval(heartbeat);
-    }
-
-    // Stream response
     const words = fullText.split(/(\s+)/);
     for (let i = 0; i < words.length; i += 6) {
-      res.write(`data: ${JSON.stringify({ text: words.slice(i, i + 6).join('') })}\n\n`);
+      res.write(`data: ${JSON.stringify({ text: words.slice(i, i+6).join('') })}\n\n`);
       await new Promise(r => setTimeout(r, 18));
     }
-
     res.write('data: [DONE]\n\n');
     res.end();
-
   } catch (err) {
-    console.error('Gemini error:', err.message);
-    try {
-      if (!res.headersSent) {
-        res.writeHead(500, { 'Content-Type': 'text/event-stream' });
-      }
-      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-      res.end();
-    } catch (e) { /* connection already closed */ }
+    if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/event-stream' });
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+    res.end();
   }
 }
 
-// ─── Main Server ──────────────────────────────────────────────
-const server = http.createServer(async (req, res) => {
+// ─── Server ───────────────────────────────────────────────────
+http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
-
-  // API routes
   if (req.method === 'POST' && req.url === '/api/register') { handleRegister(req, res); return; }
   if (req.method === 'POST' && req.url === '/api/login')    { handleLogin(req, res); return; }
   if (req.method === 'GET'  && req.url === '/api/logout')   { handleLogout(req, res); return; }
   if (req.method === 'GET'  && req.url === '/api/me')       { handleMe(req, res); return; }
   if (req.method === 'POST' && req.url === '/api/rewrite')  { handleGemini(req, res); return; }
+  if (req.url === '/health') { sendJSON(res, 200, { status: 'ok' }); return; }
 
-  // Health check endpoint — used by UptimeRobot to keep server awake
-  if (req.url === '/health') {
-    sendJSON(res, 200, { status: 'ok', time: new Date().toISOString() });
-    return;
-  }
-
-  // Auth-based page routing
   const session = getSession(getTokenFromRequest(req));
   const url = req.url.split('?')[0];
 
@@ -330,24 +239,16 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(302, { 'Location': '/login.html' }); res.end(); return;
   }
 
-  // Serve static files
   const filePath = path.join(__dirname, url === '/' ? '/login.html' : url);
   fs.readFile(filePath, (err, data) => {
     if (err) { res.writeHead(404); res.end('404 Not Found'); return; }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath)] || 'text/plain' });
     res.end(data);
   });
-});
-
-// Remove all server-level timeouts
-server.timeout = 0;
-server.keepAliveTimeout = 120000;
-server.headersTimeout = 121000;
-
-server.listen(PORT, '0.0.0.0', () => {
+}).listen(PORT, '0.0.0.0', () => {
   console.log('');
   console.log('  ✅ ResumeAI server running!');
-  console.log(`  🌐 Port: ${PORT}`);
+  console.log(`  🌐 Open: http://localhost:${PORT}`);
   console.log(`  🤖 Model: gemini-2.5-flash`);
   console.log(`  🗄️  Database: resumeai-db.json`);
   console.log('');
