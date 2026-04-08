@@ -190,7 +190,10 @@ RULES: Keep same structure, bullet count, name, contact info, company names, dat
 Only improve keywords/phrasing. Output ONLY the resume. No commentary.
 Format: ## headers, ### job titles, - bullets, **bold** company/dates`;
 
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'Access-Control-Allow-Origin': '*' });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'Access-Control-Allow-Origin': '*', 'X-Accel-Buffering': 'no' });
+    req.socket.setTimeout(0);
+    req.socket.setNoDelay(true);
+    req.socket.setKeepAlive(true);
     res.write(`data: ${JSON.stringify({ status: 'thinking' })}\n\n`);
 
     const fullText = await callGemini({
